@@ -33,7 +33,7 @@ cd client && npm install && npm start  # frontend on :3000
 | Files | Chunked AES-GCM | Encrypted file transfer |
 | Logs | SHA-256 hash chain + Ed25519 | Tamper-proof audit |
 | Backend | Express.js + MongoDB | Zero-knowledge relay |
-| Frontend | React | Chat UI |
+| Frontend | React + Nginx | Chat UI & Reverse Proxy |
 
 ---
 
@@ -45,6 +45,23 @@ cd client && npm install && npm start  # frontend on :3000
 - **Tamper-Proof Logs** — SHA-256 hash chain with Ed25519 signatures
 - **Perfect Forward Secrecy** — Per-message nonces, per-file random keys
 - **Memory Hygiene** — File keys zeroed after use
+
+---
+
+## 🧅 Hosting on Tor (Anonymity)
+
+For ultimate server anonymity, OtterChat can be easily hosted as a Tor Hidden Service:
+
+1. Install Tor: `sudo apt install tor`
+2. Add the following to your `/etc/tor/torrc`:
+   ```text
+   HiddenServiceDir /var/lib/tor/otterchat/
+   HiddenServicePort 80 127.0.0.1:3000
+   ```
+3. Restart the Tor daemon: `sudo systemctl restart tor`
+4. Retrieve your shareable address: `sudo cat /var/lib/tor/otterchat/hostname`
+
+Your frontend will automatically detect the `.onion` address and display it correctly in the Chat Dashboard for easy sharing!
 
 ---
 
