@@ -2,6 +2,11 @@
   "Parv": {
     "publicKey": {},
     "onionAddress": "http://6wmri6753te3yhnw4vse7qwum34tjgtfhf77hhrifkxm3f23yn3ydmyd.onion",
-    "lastSeen": 1774001709175
+    "lastSeen": 1774005069723
+  },
+  "Dabbu": {
+    "publicKey": {},
+    "onionAddress": "egikj6o4iiglkjgimmqkwbw3irywngu7uxwejqi2phzo7cg4pmxgudqd.onion",
+    "lastSeen": 1774005020895
   }
 }
