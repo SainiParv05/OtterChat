@@ -2,204 +2,234 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../services/AuthContext';
 import { api } from '../services/api';
 import { encryptMessage, decryptMessage, bufferToBase64, base64ToBuffer } from '../utils/crypto';
-import { v4 as uuidv4 } from 'uuid';
 
 const s = {
-  app: { display: 'flex', height: '100vh', background: '#0d1117' },
-  sidebar: { width: 260, background: '#161b22', borderRight: '1px solid #30363d', display: 'flex', flexDirection: 'column' },
-  sideHeader: { padding: '16px 20px', borderBottom: '1px solid #30363d', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  logo: { fontSize: 16, fontWeight: 700, color: '#58a6ff' },
-  userInfo: { fontSize: 11, color: '#8b949e', marginTop: 2 },
-  contactInput: { margin: 12, padding: '8px 12px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3', fontSize: 13, outline: 'none' },
-  startBtn: { margin: '0 12px 12px', padding: '8px', background: '#238636', border: 'none', borderRadius: 6, color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 },
+  app: { display: 'flex', height: '100vh', background: '#0d1117', color: '#e6edf3' },
+  sidebar: { width: 300, background: '#161b22', borderRight: '1px solid #30363d', display: 'flex', flexDirection: 'column', padding: 16, overflowY: 'auto' },
+  header: { fontSize: 18, fontWeight: 600, color: '#58a6ff', marginBottom: 16 },
+  input: { padding: '8px 12px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3', fontSize: 13, outline: 'none', marginBottom: 8, width: '100%' },
+  btn: (bg) => ({ padding: '8px', background: bg || '#238636', border: 'none', borderRadius: 6, color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600, width: '100%', marginBottom: 12 }),
+  section: { marginTop: 20, paddingTop: 16, borderTop: '1px solid #30363d' },
   chat: { flex: 1, display: 'flex', flexDirection: 'column' },
-  chatHeader: { padding: '14px 20px', borderBottom: '1px solid #30363d', background: '#161b22', display: 'flex', alignItems: 'center', gap: 10 },
-  chatTitle: { fontSize: 15, fontWeight: 600, color: '#e6edf3' },
-  e2eeBadge: { fontSize: 11, color: '#3fb950', background: 'rgba(63,185,80,0.1)', padding: '2px 8px', borderRadius: 20 },
-  messages: { flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: 12 },
+  chatHeader: { padding: '14px 20px', borderBottom: '1px solid #30363d', background: '#161b22', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   msgBubble: (mine) => ({
     maxWidth: '60%', alignSelf: mine ? 'flex-end' : 'flex-start',
     background: mine ? '#1f6feb' : '#21262d', borderRadius: mine ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-    padding: '10px 16px', color: '#e6edf3', fontSize: 14, lineHeight: 1.5,
+    padding: '10px 16px', fontSize: 14, color: '#e6edf3'
   }),
   msgMeta: (mine) => ({ fontSize: 11, color: '#8b949e', marginTop: 4, textAlign: mine ? 'right' : 'left' }),
-  inputBar: { padding: '16px 20px', borderTop: '1px solid #30363d', display: 'flex', gap: 12, background: '#161b22' },
-  msgInput: { flex: 1, padding: '10px 16px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 24, color: '#e6edf3', fontSize: 14, outline: 'none' },
-  sendBtn: { padding: '10px 20px', background: '#1f6feb', border: 'none', borderRadius: 24, color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 14 },
-  emptyChat: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: '#8b949e' },
-  logoutBtn: { padding: '6px 12px', background: 'none', border: '1px solid #30363d', borderRadius: 6, color: '#8b949e', cursor: 'pointer', fontSize: 12 },
 };
 
 export default function Chat() {
   const { session, logout } = useAuth();
+
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [recipientId, setRecipientId] = useState('');
-  const [recipientInput, setRecipientInput] = useState('');
-  const [recipientPub, setRecipientPub] = useState(null);
-  const [status, setStatus] = useState('');
+
+  // Registration
+  const [myOnion, setMyOnion] = useState('');
+  const [registered, setRegistered] = useState(false);
+
+  // Directory Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+
+  // P2P Sessions from node state
+  const [sessions, setSessions] = useState({});
+  const [activeChat, setActiveChat] = useState(null); // onionUrl of current chat
+
   const bottomRef = useRef(null);
 
   useEffect(() => {
     if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function startChat() {
-    if (!recipientInput.trim()) return;
+  // Polling Local P2P Node Status
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const { data } = await api.getState();
+        setSessions(data.sessions || {});
+
+        if (data.messages && data.messages.length > 0) {
+          // Attempt to decrypt and push to state
+          const newMsgs = await Promise.all(data.messages.map(async (m) => {
+            try {
+              // We need the sender's public key (from sessions state)
+              const peerSession = data.sessions[m.fromOnion];
+              if (!peerSession || !peerSession.publicKey) throw new Error('No pubkey');
+
+              const ct = base64ToBuffer(m.encryptedPayload.ciphertext);
+              const nonce = base64ToBuffer(m.encryptedPayload.nonce);
+              const text = await decryptMessage(ct, nonce, peerSession.publicKey, session.keyPair.priv);
+              return { id: Date.now() + Math.random(), text, mine: false, fromOnion: m.fromOnion };
+            } catch (e) {
+              return { id: Date.now() + Math.random(), text: '[Decryption Failed]', mine: false, fromOnion: m.fromOnion };
+            }
+          }));
+          setMessages(prev => [...prev, ...newMsgs]);
+        }
+      } catch (e) {
+        console.error('Failed to poll state', e);
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [session]);
+
+  const handleRegister = async () => {
+    if (!myOnion) return;
     try {
-      // In a real system, look up recipient's public key from server
-      // For demo: we derive a mock pub key from their username
-      // (In production, /auth/get-pubkey endpoint would return this)
-      setRecipientId(recipientInput.trim());
-      // Use a placeholder pub — in full deployment, fetch from /auth/user/:username
-      const { generateUserKeypair } = await import('../utils/crypto');
-      const mockPair = await generateUserKeypair(); // placeholder
-      setRecipientPub(mockPair.pub);
-      setStatus(`Chatting with ${recipientInput.trim()} (E2EE active)`);
+      await api.directoryRegister({ userId: session.userId, publicKey: session.keyPair.pub, onionAddress: myOnion });
+      setRegistered(true);
     } catch (e) {
-      setStatus('Error: ' + e.message);
+      alert('Directory Registration Failed');
     }
-  }
+  };
 
-  async function sendMsg(e) {
+  const handleSearch = async () => {
+    try {
+      const { data } = await api.directorySearch(searchQuery);
+      setSearchResults(data);
+    } catch (e) {
+      alert('Search Failed');
+    }
+  };
+
+  const sendRequest = async (targetOnion) => {
+    try {
+      await api.outboundRequest({ targetOnion, myUserId: session.userId, myOnion, myPublicKey: session.keyPair.pub });
+      alert('Request Sent via Tor SOCKS5!');
+    } catch (e) {
+      alert('Failed to route request');
+    }
+  };
+
+  const acceptRequest = async (targetOnion) => {
+    try {
+      await api.outboundAccept({ targetOnion, myOnion, myPublicKey: session.keyPair.pub });
+      setActiveChat(targetOnion);
+    } catch (e) {
+      alert('Failed to accept');
+    }
+  };
+
+  const sendMessage = async (e) => {
     e.preventDefault();
-    if (!input.trim() || !recipientId || !recipientPub) return;
-
+    if (!input.trim() || !activeChat || !sessions[activeChat]) return;
+    const peerPub = sessions[activeChat].publicKey;
     try {
-      const { ct, nonce } = await encryptMessage(input, session.keyPair.priv, recipientPub);
-      const msgId = uuidv4();
-
-      await api.sendMessage({
-        msgId,
-        senderId: session.userId,
-        recipientId,
-        ciphertext: bufferToBase64(ct),
-        nonce: bufferToBase64(nonce),
-        timestamp: Date.now(),
-      }, session.token);
-
-      setMessages(prev => [...prev, {
-        msgId,
-        senderId: session.userId,
-        text: input,
-        timestamp: Date.now(),
-        mine: true,
-      }]);
-
-      // Log MESSAGE_SENT
-      await api.appendLog({
-        logId: uuidv4(),
-        userId: session.userId,
-        eventType: 'MESSAGE_SENT',
-        msgId,
-        fileId: null,
-        timestamp: Date.now(),
-        prevHash: '0'.repeat(64),
-        currentHash: '1'.repeat(64),
-        payloadEncrypted: bufferToBase64(ct.slice(0, 16)),
-      }, session.token);
-
+      const { ct, nonce } = await encryptMessage(input, session.keyPair.priv, peerPub);
+      await api.outboundMessage({
+        targetOnion: activeChat,
+        myOnion,
+        encryptedPayload: { ciphertext: bufferToBase64(ct), nonce: bufferToBase64(nonce) }
+      });
+      setMessages(p => [...p, { id: Date.now(), text: input, mine: true, fromOnion: activeChat }]);
       setInput('');
-    } catch (err) {
-      setStatus('Send failed: ' + err.message);
+    } catch (e) {
+      alert('Failed to send encrypted message');
     }
-  }
+  };
 
-  async function fetchMessages() {
-    try {
-      const res = await api.fetchMessages(session.userId, session.token);
-      const decrypted = await Promise.all(
-        (res.data.messages || []).map(async (msg) => {
-          try {
-            const ct = base64ToBuffer(msg.ciphertext);
-            const nonce = base64ToBuffer(msg.nonce);
-            // Decrypt using sender's pub key (in full system, fetch from server)
-            const text = await decryptMessage(ct, nonce, session.keyPair.pub, session.keyPair.priv)
-              .catch(() => '[Encrypted message — key not available]');
-            return { ...msg, text, mine: msg.senderId === session.userId };
-          } catch {
-            return { ...msg, text: '[Unable to decrypt]', mine: false };
-          }
-        })
-      );
-      setMessages(decrypted);
-    } catch (err) {
-      setStatus('Fetch failed: ' + err.message);
+  const disconnect = async () => {
+    if (activeChat) {
+      await api.outboundDisconnect({ targetOnion: activeChat, myOnion });
+      setActiveChat(null);
+      setMessages([]); // Burn ephemerals
     }
-  }
+  };
+
+  const uiLogout = async () => {
+    await disconnect();
+    logout();
+  };
+
+  const pendingIncoming = Object.entries(sessions).filter(([_, s]) => s.state === 'pending_incoming');
+  const connectedPeers = Object.entries(sessions).filter(([_, s]) => s.state === 'connected');
 
   return (
     <div style={s.app}>
-      {/* Sidebar */}
       <div style={s.sidebar}>
-        <div style={s.sideHeader}>
+        <div style={s.header}>🦦 TorP2P Node</div>
+        <div style={{ fontSize: 12, marginBottom: 16, color: '#8b949e' }}>ID: {session.userId}</div>
+
+        {!registered ? (
           <div>
-            <div style={s.logo}>🦦 OtterChat</div>
-            <div style={s.userInfo}>@{session.username}</div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Register your node to Directory:</div>
+            <input style={s.input} placeholder="Your .onion address..." value={myOnion} onChange={e => setMyOnion(e.target.value)} />
+            <button style={s.btn('#1f6feb')} onClick={handleRegister}>Publish Node Contact</button>
           </div>
-          <button style={s.logoutBtn} onClick={logout}>Logout</button>
+        ) : (
+          <div style={{ color: '#3fb950', fontSize: 12, marginBottom: 16 }}>✅ Registered as {myOnion}</div>
+        )}
+
+        <div style={s.section}>
+          <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>🔍 Search Directory</div>
+          <input style={s.input} placeholder="User ID..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          <button style={s.btn('#2ea043')} onClick={handleSearch}>Search Tor Directory</button>
+          {searchResults.map(res => (
+            <div key={res.onionAddress} style={{ background: '#21262d', padding: 8, borderRadius: 4, marginBottom: 8 }}>
+              <div style={{ fontSize: 12 }}>{res.userId}</div>
+              <button style={{ ...s.btn('#1f6feb'), marginTop: 8, padding: 4 }} onClick={() => sendRequest(res.onionAddress)}>Connect</button>
+            </div>
+          ))}
         </div>
-        <input
-          style={s.contactInput}
-          placeholder="Enter recipient user ID..."
-          value={recipientInput}
-          onChange={e => setRecipientInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && startChat()}
-        />
-        <button style={s.startBtn} onClick={startChat}>Start Encrypted Chat</button>
-        <button style={{ ...s.startBtn, background: '#30363d', marginTop: 4 }} onClick={fetchMessages}>
-          Fetch Messages
-        </button>
-        {status && <div style={{ fontSize: 11, color: '#3fb950', padding: '8px 12px' }}>{status}</div>}
+
+        {pendingIncoming.length > 0 && (
+          <div style={s.section}>
+            <div style={{ fontSize: 13, marginBottom: 8, color: '#d29922' }}>🔔 Incoming Requests</div>
+            {pendingIncoming.map(([onion, peer]) => (
+              <div key={onion} style={{ background: '#3d2e13', padding: 8, borderRadius: 4, marginBottom: 8 }}>
+                <div style={{ fontSize: 12 }}>{peer.userId} ({onion.slice(0, 10)}...)</div>
+                <button style={{ ...s.btn('#2ea043'), marginTop: 8, padding: 4 }} onClick={() => acceptRequest(onion)}>Accept Session</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={s.section}>
+          <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>🌐 Active Tor Sessions</div>
+          {connectedPeers.map(([onion, peer]) => (
+            <div key={onion} onClick={() => setActiveChat(onion)} style={{ background: activeChat === onion ? '#1f6feb' : '#21262d', padding: 10, borderRadius: 6, cursor: 'pointer', marginBottom: 6, fontSize: 13 }}>
+              {onion.slice(0, 15)}...
+            </div>
+          ))}
+        </div>
+
+        <div style={{ flex: 1 }} />
+        <button style={s.btn('#da3633')} onClick={uiLogout}>Burn Session & Logout</button>
       </div>
 
-      {/* Main chat */}
       <div style={s.chat}>
-        {recipientId ? (
+        {activeChat ? (
           <>
             <div style={s.chatHeader}>
-              <span>🔒</span>
-              <span style={s.chatTitle}>{recipientId}</span>
-              <span style={s.e2eeBadge}>E2EE Active</span>
+              <div>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>🔒 E2EE Tor Peer</span>
+                <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>{activeChat}</div>
+              </div>
+              <button style={{ padding: '6px 12px', background: 'none', border: '1px solid #30363d', color: '#e6edf3', borderRadius: 4, cursor: 'pointer' }} onClick={disconnect}>Burn Chat</button>
             </div>
-            <div style={s.messages}>
-              {messages.map(msg => (
-                <div key={msg.msgId}>
+            <div style={{ flex: 1, padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {messages.filter(m => m.fromOnion === activeChat).map(msg => (
+                <div key={msg.id} style={{ alignSelf: msg.mine ? 'flex-end' : 'flex-start' }}>
                   <div style={s.msgBubble(msg.mine)}>{msg.text}</div>
-                  <div style={s.msgMeta(msg.mine)}>
-                    {msg.mine ? 'You' : msg.senderId?.slice(0, 8)} · {new Date(msg.timestamp).toLocaleTimeString()}
-                  </div>
+                  <div style={s.msgMeta(msg.mine)}>{msg.mine ? 'You' : 'Peer'}</div>
                 </div>
               ))}
               <div ref={bottomRef} />
             </div>
-            <form onSubmit={sendMsg} style={s.inputBar}>
-              <input
-                style={s.msgInput}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Type a message... (encrypted before sending)"
-              />
-              <button type="submit" style={s.sendBtn}>Send 🔒</button>
+            <form onSubmit={sendMessage} style={{ padding: 16, borderTop: '1px solid #30363d', background: '#161b22', display: 'flex', gap: 10 }}>
+              <input style={s.input} value={input} onChange={e => setInput(e.target.value)} placeholder="Send zero-knowledge message..." />
+              <button type="submit" style={{ ...s.btn('#1f6feb'), width: 'auto', marginBottom: 0, padding: '0 24px' }}>Send</button>
             </form>
           </>
         ) : (
-          <div style={s.emptyChat}>
-            <div style={{ fontSize: 48 }}>🦦</div>
-            <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>Welcome to OtterChat</div>
-            <div>Enter a recipient ID to start an encrypted conversation</div>
-
-            <div style={{ background: '#161b22', padding: 20, borderRadius: 8, marginTop: 16, textAlign: 'center', border: '1px solid #30363d', minWidth: 320 }}>
-              <div style={{ marginBottom: 12, color: '#8b949e', fontSize: 13 }}>Share these details so friends can connect with you:</div>
-              <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: '#8b949e', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Chat ID</span>
-                <strong style={{ color: '#58a6ff', userSelect: 'all', cursor: 'pointer', background: '#0d1117', padding: '8px 12px', borderRadius: 4, border: '1px dashed #30363d', wordBreak: 'break-all' }}>{session.userId}</strong>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ color: '#8b949e', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Server Address</span>
-                <strong style={{ color: '#3fb950', userSelect: 'all', cursor: 'pointer', background: '#0d1117', padding: '8px 12px', borderRadius: 4, border: '1px dashed #30363d', wordBreak: 'break-all' }}>{window.location.hostname}</strong>
-              </div>
-            </div>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b949e', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 48 }}>🧅</div>
+            <div style={{ fontWeight: 600, color: '#e6edf3', fontSize: 18 }}>P2P Tor Routing Active</div>
+            <div>Select an active session or search the directory to start</div>
+            <div>No data touches persistent storage.</div>
           </div>
         )}
       </div>

@@ -1,0 +1,25 @@
+# OtterChat Tor P2P Decentralization Walkthrough
+
+OtterChat has been completely overhauled from a centralized messaging application to a **pure fully decentralized, memory-only P2P messenger running exclusively on Tor**. 
+
+## Changes Made
+
+### 1. Isolated Directory Server
+Created a lightweight, decoupled "Phonebook" server ([directory-server/server.js](file:///home/kali/Downloads/otterchat%20%281%29/otterchat/directory-server/server.js)) that tracks which User IDs correspond to which `.onion` network addresses. It does not store plaintext or ciphertext; its only job is answering the question: *"Which Tor address does User X use?"*
+
+### 2. Local P2P Node Backend
+The local server no longer connects to MongoDB. Instead, it:
+- Acts as an ad-hoc `.onion` receiver.
+- Uses `socks-proxy-agent` to route **all outgoing requests** securely over your system's `localhost:9050` Tor proxy.
+- Provides purely memory-based REST endpoints (`/p2p/request`, `/p2p/accept`, `/p2p/message`, `/p2p/disconnect`).
+
+### 3. Ephemeral Frontend (React)
+- **Zero-Storage Messaging**: The Chat component UI ([Chat.js](file:///home/kali/Downloads/otterchat%20%281%29/otterchat/client/src/components/Chat.js)) now stores all messages natively in its React state. When you click "Logout" or "Burn Chat", the data evaporates instantly without touching the disk.
+- **Search & Connection**: New UI flow allowing you to register your `.onion` address to the central Directory Server, then search for other users and send connection requests directly.
+
+## How to Test the Flow
+
+1. **Verify your Tor setup**: Make sure your local Tor proxy is running.
+2. **Access the Central Directory**: Note that the backend exposes `DIRECTORY_SERVER_URL=http://localhost:4000` locally for testing, but in production, you can point this to an actual `.onion` URL on the Tor network.
+3. **Register Your Node**: Open the Chat interface (`localhost:3000`), enter your Tor `.onion` address locally, and click "Publish Node Contact".
+4. **Accept and Request**: Have your teammate do the same, use the search box, and click "Connect". Accept the dialogue and begin chatting securely with **zero traces** left on disk!

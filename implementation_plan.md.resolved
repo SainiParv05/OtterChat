@@ -1,0 +1,68 @@
+# Tor-Based P2P Architecture for OtterChat
+
+This document outlines the plan to transform OtterChat from a centralized backend model to a fully decentralized, Tor-based P2P messenger using a central Directory Server.
+
+## User Review Required
+
+> [!WARNING]
+> This is a **massive architectural rewrite**. The current centralized Express/MongoDB backend logic for storing encrypted messages and files will be completely discarded in favor of ephemeral P2P communication. Please review the proposed architecture to ensure it meets your requirements before we proceed with the execution.
+
+## Proposed Architecture
+
+1. **Directory Server** (Hosted on a central `.onion` address)
+   - A minimalist, independent server that acts only as a phonebook.
+   - When a user logs in to their local OtterChat, it registers their current local `.onion` address with their `userId` on the Directory Server.
+   - Users can query this server to get the `.onion` address of the person they want to chat with.
+
+2. **The Client Application** (Runs locally on each user's machine)
+   - Consists of two parts: the **Local P2P Node (Backend)** and the **React Frontend**.
+   - **Local P2P Node**:
+     - Automatically provisions an ephemeral `.onion` Hidden Service pointing to itself using a local Tor daemon.
+     - Uses a Tor SOCKS5 proxy (via `socks-proxy-agent`) to make outbound requests to the Directory Server and other users' P2P Nodes.
+     - Exposes P2P REST endpoints:
+       - `POST /p2p/request`: Receive an incoming chat request from a peer.
+       - `POST /p2p/accept`: Receive a notification that a request was accepted.
+       - `POST /p2p/message`: Receive a new chat message.
+       - `POST /p2p/disconnect`: Receive a termination notice.
+     - Maintains active chat sessions purely in memory. All state is wiped upon logout or disconnect.
+   - **Frontend**:
+     - Disconnects completely from the old MongoDB history paradigm.
+     - Connects only to the Local P2P Node to send requests and display incoming P2P events via WebSockets or polling.
+
+## Proposed Changes
+
+### Directory Server
+#### [NEW] `directory-server/server.js`
+- Express server with in-memory or lightweight SQLite storage mapping `userId` -> `.onion` URL.
+- Endpoints: `POST /register`, `GET /lookup/:userId`.
+
+### Client P2P Node (Local Backend)
+#### [MODIFY] `server/index.js` (or similar entrypoint)
+- Remove MongoDB dependencies for message storage.
+- Initialize outbound `axios` instances with `socks-proxy-agent` to route traffic through `127.0.0.1:9050` (local Tor proxy).
+#### [NEW] `server/p2p/routes.js`
+- Endpoints for receiving requests, accepts, and messages from other peers.
+#### [NEW] `server/tor/setup.js`
+- Logic to automatically create and retrieve the client's local Hidden Service `.onion` address so it can register with the Directory Server.
+
+### Frontend
+#### [MODIFY] [client/src/services/api.js](file:///home/kali/Downloads/otterchat%20%281%29/otterchat/client/src/services/api.js)
+- Replace centralized endpoints with calls to the Local P2P Node (which in turn connects to peers/Directory Server).
+#### [MODIFY] [client/src/components/Chat.js](file:///home/kali/Downloads/otterchat%20%281%29/otterchat/client/src/components/Chat.js)
+- Overhaul UI to include an "Add Contact via Search" modal which triggers a connection request.
+- Add an "Incoming Request (Accept/Reject)" modal.
+- Ensure all message states are purely in React memory and drop when the user clicks "Logout" or the session ends.
+
+## Verification Plan
+
+### Automated Tests
+- Unit test the Directory Server lookup logic.
+- Mock the SOCKS5 proxy to test P2P request workflows (A -> B request, B -> A accept).
+
+### Manual Verification
+1. Start the Directory Server on localhost.
+2. Start two isolated Client instances.
+3. Verify Client A can search for Client B and send a request.
+4. Verify Client B receives the request and accepts it.
+5. Verify messages flow between A and B, bypassing the Directory Server.
+6. Trigger logout on Client A and verify Client B's session terminates and messages are zeroed out locally.
