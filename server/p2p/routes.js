@@ -128,14 +128,24 @@ router.get('/state', (req, res) => {
 });
 
 // A helper for the frontend to register onto the central Directory Server!
-const DS_URL = process.env.DIRECTORY_SERVER_URL || 'http://127.0.0.1:4000'; // Usually an .onion url
+let DS_URL = process.env.DIRECTORY_SERVER_URL || 'http://127.0.0.1:4000'; // Usually an .onion url
+
+const getDsConfig = () => DS_URL.includes('.onion') ? { httpAgent: agent, httpsAgent: agent } : {};
+
+router.post('/set-directory-server', async (req, res) => {
+    const { url } = req.body;
+    DS_URL = url || DS_URL;
+    try {
+        await axios.get(`${DS_URL}/search`, getDsConfig());
+        res.json({ success: true, url: DS_URL });
+    } catch (e) {
+        res.status(400).json({ error: 'Could not connect to Directory Server at ' + DS_URL });
+    }
+});
 router.post('/directory-register', async (req, res) => {
     const { userId, publicKey, onionAddress } = req.body;
     try {
-        const dsAgent = process.env.DIRECTORY_SERVER_URL ? agent : undefined; // Use agent if it's external .onion
-        const { data } = await axios.post(`${DS_URL}/register`, { userId, publicKey, onionAddress }, {
-            httpAgent: dsAgent, httpsAgent: dsAgent
-        });
+        const { data } = await axios.post(`${DS_URL}/register`, { userId, publicKey, onionAddress }, getDsConfig());
         res.json(data);
     } catch (e) {
         console.error('[P2P] Error registering with DS', e.message);
@@ -145,10 +155,7 @@ router.post('/directory-register', async (req, res) => {
 
 router.get('/directory-search', async (req, res) => {
     try {
-        const dsAgent = process.env.DIRECTORY_SERVER_URL ? agent : undefined;
-        const { data } = await axios.get(`${DS_URL}/search?q=${req.query.q || ''}`, {
-            httpAgent: dsAgent, httpsAgent: dsAgent
-        });
+        const { data } = await axios.get(`${DS_URL}/search?q=${req.query.q || ''}`, getDsConfig());
         res.json(data);
     } catch (e) {
         console.error('[P2P] Error searching DS', e.message);

@@ -3,6 +3,7 @@ import axios from 'axios';
 const BASE = process.env.REACT_APP_API_URL || '';
 
 export const api = {
+  setDirectoryServer: (data) => axios.post(`${BASE}/p2p/set-directory-server`, data),
   // Auth
   login: (data) => axios.post(`${BASE}/auth/login`, data),
   register: (data) => axios.post(`${BASE}/auth/register`, data),
