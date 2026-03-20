@@ -7,12 +7,15 @@ const router = express.Router();
 const sessions = {};
 const messagePool = [];
 
+const normalizeOnionHost = (value = '') => value.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+
 // SOCKS5 Agent pointing to local Tor proxy for outbound requests
 const torProxy = process.env.TOR_PROXY || 'socks5h://127.0.0.1:9050';
 const agent = new SocksProxyAgent(torProxy);
 
 const sendToPeer = async (onionUrl, endpoint, data) => {
-    return axios.post(`http://${onionUrl}/p2p/${endpoint}`, data, {
+    const onionHost = normalizeOnionHost(onionUrl);
+    return axios.post(`http://${onionHost}/p2p/${endpoint}`, data, {
         httpAgent: agent,
         httpsAgent: agent,
         timeout: 30000
@@ -65,31 +68,41 @@ router.post('/disconnect', (req, res) => {
 
 router.post('/outbound-request', async (req, res) => {
     const { targetOnion, myUserId, myOnion, myPublicKey } = req.body;
-    sessions[targetOnion] = { onionUrl: targetOnion, state: 'pending_outgoing' };
+    const normalizedTargetOnion = normalizeOnionHost(targetOnion);
+    sessions[normalizedTargetOnion] = { onionUrl: normalizedTargetOnion, state: 'pending_outgoing' };
     try {
-        await sendToPeer(targetOnion, 'request', {
+        await sendToPeer(normalizedTargetOnion, 'request', {
             fromUserId: myUserId,
             fromOnion: myOnion,
             fromPublicKey: myPublicKey
         });
         res.json({ success: true });
     } catch (e) {
-        delete sessions[targetOnion];
+        delete sessions[normalizedTargetOnion];
         console.error('[P2P] Error sending request', e.message);
-        res.status(500).json({ error: 'Failed to reach peer' });
+        res.status(500).json({
+            error: e.message.includes('HostUnreachable')
+                ? 'Failed to reach peer over Tor (peer onion host unreachable)'
+                : 'Failed to reach peer'
+        });
     }
 });
 
 router.post('/outbound-accept', async (req, res) => {
     const { targetOnion, myOnion, myPublicKey } = req.body;
-    if (sessions[targetOnion]) {
-        sessions[targetOnion].state = 'connected';
+    const normalizedTargetOnion = normalizeOnionHost(targetOnion);
+    if (sessions[normalizedTargetOnion]) {
+        sessions[normalizedTargetOnion].state = 'connected';
         try {
-            await sendToPeer(targetOnion, 'accept', { fromOnion: myOnion, fromPublicKey: myPublicKey });
+            await sendToPeer(normalizedTargetOnion, 'accept', { fromOnion: myOnion, fromPublicKey: myPublicKey });
             res.json({ success: true });
         } catch (e) {
             console.error('[P2P] Error sending accept', e.message);
-            res.status(500).json({ error: 'Failed to reach peer' });
+            res.status(500).json({
+                error: e.message.includes('HostUnreachable')
+                    ? 'Failed to reach peer over Tor (peer onion host unreachable)'
+                    : 'Failed to reach peer'
+            });
         }
     } else {
         res.status(400).json({ error: 'No pending request' });
@@ -98,25 +111,31 @@ router.post('/outbound-accept', async (req, res) => {
 
 router.post('/outbound-message', async (req, res) => {
     const { targetOnion, myOnion, encryptedPayload } = req.body;
+    const normalizedTargetOnion = normalizeOnionHost(targetOnion);
     try {
-        await sendToPeer(targetOnion, 'message', { fromOnion: myOnion, encryptedPayload });
+        await sendToPeer(normalizedTargetOnion, 'message', { fromOnion: myOnion, encryptedPayload });
         res.json({ success: true });
     } catch (e) {
         console.error('[P2P] Error sending message', e.message);
-        res.status(500).json({ error: 'Failed to deliver message' });
+        res.status(500).json({
+            error: e.message.includes('HostUnreachable')
+                ? 'Failed to deliver message over Tor (peer onion host unreachable)'
+                : 'Failed to deliver message'
+        });
     }
 });
 
 router.post('/outbound-disconnect', async (req, res) => {
     const { targetOnion, myOnion } = req.body;
+    const normalizedTargetOnion = normalizeOnionHost(targetOnion);
     try {
-        await sendToPeer(targetOnion, 'disconnect', { fromOnion: myOnion });
+        await sendToPeer(normalizedTargetOnion, 'disconnect', { fromOnion: myOnion });
     } catch (e) {
         // Ignore error if peer is already gone
     }
-    delete sessions[targetOnion];
+    delete sessions[normalizedTargetOnion];
     for (let i = messagePool.length - 1; i >= 0; i--) {
-        if (messagePool[i].fromOnion === targetOnion) messagePool.splice(i, 1);
+        if (messagePool[i].fromOnion === normalizedTargetOnion) messagePool.splice(i, 1);
     }
     res.json({ success: true });
 });

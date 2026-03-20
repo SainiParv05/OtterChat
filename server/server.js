@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 const p2pRoutes = require('./p2p/routes');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors());
