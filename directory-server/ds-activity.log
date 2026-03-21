@@ -5,3 +5,10 @@
 [2026-03-21T16:40:07.988Z] NEW_REGISTRATION | user="Saini" onion="a5jhkgkb47alnxcyv2tef56hb4z4vwstfm4hcvgujw26uxfy4wxr5uyd.onion"
 [2026-03-21T16:40:32.918Z] RE-REGISTRATION | user="Vartika" onion="gniota6ty2zpdmfvpmpokznjbtgtunxb6bacfnz52op447p2gfzvgoid.onion"
 [2026-03-21T16:40:43.235Z] SEARCH | query="Vartika" results=1
+[2026-03-21T17:03:33.878Z] SERVER_START | Directory Server running on port 4000
+[2026-03-21T17:04:32.479Z] RE-REGISTRATION | user="Saini" onion="a5jhkgkb47alnxcyv2tef56hb4z4vwstfm4hcvgujw26uxfy4wxr5uyd.onion"
+[2026-03-21T17:09:45.857Z] RE-REGISTRATION | user="Parv" onion="ycrivdgau3jjy4qg2axaz4nudt3jsynzgzpnnq3zaoy2ms4vixxo4aid.onion"
+[2026-03-21T17:09:51.875Z] SEARCH | query="Saini" results=1
+[2026-03-21T17:13:15.193Z] RE-REGISTRATION | user="Vartika" onion="gniota6ty2zpdmfvpmpokznjbtgtunxb6bacfnz52op447p2gfzvgoid.onion"
+[2026-03-21T17:21:37.261Z] RE-REGISTRATION | user="Parv" onion="ycrivdgau3jjy4qg2axaz4nudt3jsynzgzpnnq3zaoy2ms4vixxo4aid.onion"
+[2026-03-21T17:21:44.021Z] SEARCH | query="Saini" results=1
