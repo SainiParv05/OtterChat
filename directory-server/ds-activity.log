@@ -21,3 +21,6 @@
 [2026-03-21T17:37:19.715Z] RE-REGISTRATION | user="Saini" onion="a5jhkgkb47alnxcyv2tef56hb4z4vwstfm4hcvgujw26uxfy4wxr5uyd.onion"
 [2026-03-21T17:39:27.326Z] SEARCH | query="Parv" results=1
 [2026-03-24T05:55:52.735Z] SERVER_START | Directory Server running on port 4000
+[2026-03-24T06:44:30.778Z] SERVER_START | Directory Server running on port 4000
+[2026-03-25T04:57:26.861Z] SERVER_START | Directory Server running on port 4000
+[2026-03-25T05:07:01.621Z] RE-REGISTRATION | user="Parv" onion="ycrivdgau3jjy4qg2axaz4nudt3jsynzgzpnnq3zaoy2ms4vixxo4aid.onion"
