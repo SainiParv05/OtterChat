@@ -26,41 +26,46 @@ const sendToPeer = async (onionUrl, endpoint, data) => {
 
 router.post('/request', (req, res) => {
     const { fromUserId, fromOnion, fromPublicKey } = req.body;
-    sessions[fromOnion] = {
+    const key = normalizeOnionHost(fromOnion);
+    sessions[key] = {
         userId: fromUserId,
-        onionUrl: fromOnion,
+        onionUrl: key,
         publicKey: fromPublicKey,
         state: 'pending_incoming'
     };
-    console.log(`[P2P] Received incoming request from ${fromUserId}`);
+    console.log(`[P2P] Received incoming request from ${fromUserId} (${key}), pubkey length: ${typeof fromPublicKey === 'string' ? fromPublicKey.length : 'NOT_STRING'}`);
     res.json({ success: true });
 });
 
 router.post('/accept', (req, res) => {
     const { fromOnion, fromPublicKey } = req.body;
-    if (sessions[fromOnion] && sessions[fromOnion].state === 'pending_outgoing') {
-        sessions[fromOnion].state = 'connected';
-        sessions[fromOnion].publicKey = fromPublicKey;
-        console.log(`[P2P] Peer ${fromOnion} accepted request`);
+    const key = normalizeOnionHost(fromOnion);
+    if (sessions[key] && sessions[key].state === 'pending_outgoing') {
+        sessions[key].state = 'connected';
+        sessions[key].publicKey = fromPublicKey;
+        console.log(`[P2P] Peer ${key} accepted request, pubkey length: ${typeof fromPublicKey === 'string' ? fromPublicKey.length : 'NOT_STRING'}`);
         return res.json({ success: true });
     }
+    console.log(`[P2P] Accept failed: no pending_outgoing session for ${key}. Sessions: ${Object.keys(sessions).join(', ')}`);
     res.status(400).json({ error: 'No such pending request' });
 });
 
 router.post('/message', (req, res) => {
     const { fromOnion, encryptedPayload } = req.body;
-    messagePool.push({ fromOnion, encryptedPayload, timestamp: Date.now() });
-    console.log(`[P2P] Received message from ${fromOnion}`);
+    const key = normalizeOnionHost(fromOnion);
+    messagePool.push({ fromOnion: key, encryptedPayload, timestamp: Date.now() });
+    console.log(`[P2P] Received message from ${key}`);
     res.json({ success: true });
 });
 
 router.post('/disconnect', (req, res) => {
     const { fromOnion } = req.body;
-    delete sessions[fromOnion];
+    const key = normalizeOnionHost(fromOnion);
+    delete sessions[key];
     for (let i = messagePool.length - 1; i >= 0; i--) {
-        if (messagePool[i].fromOnion === fromOnion) messagePool.splice(i, 1);
+        if (messagePool[i].fromOnion === key) messagePool.splice(i, 1);
     }
-    console.log(`[P2P] Peer ${fromOnion} disconnected`);
+    console.log(`[P2P] Peer ${key} disconnected`);
     res.json({ success: true });
 });
 
@@ -80,6 +85,13 @@ router.post('/outbound-request', async (req, res) => {
     } catch (e) {
         delete sessions[normalizedTargetOnion];
         console.error('[P2P] Error sending request', e.message);
+        const normalizedDsHost = normalizeOnionHost(DS_URL);
+        if (normalizedTargetOnion === normalizedDsHost) {
+            return res.status(400).json({ error: 'Target onion is the Directory Server, not a peer node' });
+        }
+        if (e.response?.status === 404) {
+            return res.status(400).json({ error: 'Target onion is reachable but not running OtterChat peer endpoints (/p2p/*)' });
+        }
         res.status(500).json({
             error: e.message.includes('HostUnreachable')
                 ? 'Failed to reach peer over Tor (peer onion host unreachable)'
@@ -142,8 +154,14 @@ router.post('/outbound-disconnect', async (req, res) => {
 
 router.get('/state', (req, res) => {
     const states = { sessions, messages: [...messagePool] };
-    messagePool.length = 0; // ensure purely ephemeral
     res.json(states);
+});
+
+// Frontend calls this after successfully processing messages
+router.post('/ack-messages', (req, res) => {
+    const { count } = req.body;
+    messagePool.splice(0, count || messagePool.length);
+    res.json({ success: true });
 });
 
 // A helper for the frontend to register onto the central Directory Server!
@@ -163,8 +181,16 @@ router.post('/set-directory-server', async (req, res) => {
 });
 router.post('/directory-register', async (req, res) => {
     const { userId, publicKey, onionAddress } = req.body;
+    const normalizedPeerOnion = normalizeOnionHost(onionAddress);
+    const normalizedDsHost = normalizeOnionHost(DS_URL);
+    if (!normalizedPeerOnion.endsWith('.onion')) {
+        return res.status(400).json({ error: 'Please register a valid peer .onion address' });
+    }
+    if (normalizedPeerOnion === normalizedDsHost) {
+        return res.status(400).json({ error: 'Your peer onion cannot be the Directory Server onion' });
+    }
     try {
-        const { data } = await axios.post(`${DS_URL}/register`, { userId, publicKey, onionAddress }, getDsConfig());
+        const { data } = await axios.post(`${DS_URL}/register`, { userId, publicKey, onionAddress: normalizedPeerOnion }, getDsConfig());
         res.json(data);
     } catch (e) {
         console.error('[P2P] Error registering with DS', e.message);

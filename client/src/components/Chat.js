@@ -59,15 +59,19 @@ export default function Chat() {
               const peerSession = data.sessions[m.fromOnion];
               if (!peerSession || !peerSession.publicKey) throw new Error('No pubkey');
 
+              // Convert base64 public key back to ArrayBuffer for WebCrypto
+              const peerPubBuf = base64ToBuffer(peerSession.publicKey);
               const ct = base64ToBuffer(m.encryptedPayload.ciphertext);
               const nonce = base64ToBuffer(m.encryptedPayload.nonce);
-              const text = await decryptMessage(ct, nonce, peerSession.publicKey, session.keyPair.priv);
+              const text = await decryptMessage(ct, nonce, peerPubBuf, session.keyPair.priv);
               return { id: Date.now() + Math.random(), text, mine: false, fromOnion: m.fromOnion };
             } catch (e) {
               return { id: Date.now() + Math.random(), text: '[Decryption Failed]', mine: false, fromOnion: m.fromOnion };
             }
           }));
           setMessages(prev => [...prev, ...newMsgs]);
+          // Acknowledge messages so backend can clear them
+          await api.ackMessages(data.messages.length);
         }
       } catch (e) {
         console.error('Failed to poll state', e);
@@ -79,10 +83,12 @@ export default function Chat() {
   const handleRegister = async () => {
     if (!myOnion) return;
     try {
-      await api.directoryRegister({ userId: session.userId, publicKey: session.keyPair.pub, onionAddress: myOnion });
+      // Convert ArrayBuffer public key to base64 for JSON serialization
+      const pubKeyB64 = bufferToBase64(session.keyPair.pub);
+      await api.directoryRegister({ userId: session.userId, publicKey: pubKeyB64, onionAddress: myOnion });
       setRegistered(true);
     } catch (e) {
-      alert('Directory Registration Failed');
+      alert('Directory Registration Failed: ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -97,28 +103,44 @@ export default function Chat() {
 
   const sendRequest = async (targetOnion) => {
     try {
-      await api.outboundRequest({ targetOnion, myUserId: session.userId, myOnion, myPublicKey: session.keyPair.pub });
+      const pubKeyB64 = bufferToBase64(session.keyPair.pub);
+      await api.outboundRequest({ targetOnion, myUserId: session.userId, myOnion, myPublicKey: pubKeyB64 });
       alert('Request Sent via Tor SOCKS5!');
     } catch (e) {
-      alert('Failed to route request');
+      alert('Failed to route request: ' + (e.response?.data?.error || e.message));
     }
   };
 
   const acceptRequest = async (targetOnion) => {
     try {
-      await api.outboundAccept({ targetOnion, myOnion, myPublicKey: session.keyPair.pub });
+      const pubKeyB64 = bufferToBase64(session.keyPair.pub);
+      await api.outboundAccept({ targetOnion, myOnion, myPublicKey: pubKeyB64 });
       setActiveChat(targetOnion);
     } catch (e) {
-      alert('Failed to accept');
+      alert('Failed to accept: ' + (e.response?.data?.error || e.message));
     }
   };
 
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() || !activeChat || !sessions[activeChat]) return;
-    const peerPub = sessions[activeChat].publicKey;
+    // Get peer's public key from session
+    const peerPubB64 = sessions[activeChat].publicKey;
+    if (!peerPubB64 || typeof peerPubB64 !== 'string' || peerPubB64.length < 10) {
+      alert('Peer public key is missing or invalid. Please disconnect and reconnect with the peer.');
+      return;
+    }
+    // Stage 1: Encrypt locally
+    let ct, nonce;
     try {
-      const { ct, nonce } = await encryptMessage(input, session.keyPair.priv, peerPub);
+      const peerPubBuf = base64ToBuffer(peerPubB64);
+      ({ ct, nonce } = await encryptMessage(input, session.keyPair.priv, peerPubBuf));
+    } catch (encErr) {
+      alert('Encryption failed: ' + (encErr.message || encErr));
+      return;
+    }
+    // Stage 2: Deliver over Tor
+    try {
       await api.outboundMessage({
         targetOnion: activeChat,
         myOnion,
@@ -126,8 +148,8 @@ export default function Chat() {
       });
       setMessages(p => [...p, { id: Date.now(), text: input, mine: true, fromOnion: activeChat }]);
       setInput('');
-    } catch (e) {
-      alert('Failed to send encrypted message');
+    } catch (netErr) {
+      alert('Message encrypted but delivery failed: ' + (netErr.response?.data?.error || netErr.message));
     }
   };
 

@@ -71,7 +71,11 @@ export function bufferToBase64(buf) {
 
 export function base64ToBuffer(b64) {
   const bin = atob(b64);
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    arr[i] = bin.charCodeAt(i);
+  }
+  return arr.buffer;
 }
 
 export function zeroBuffer(buf) {

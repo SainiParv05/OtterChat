@@ -19,4 +19,5 @@ export const api = {
 
   // Local State Polling
   getState: () => axios.get(`${BASE}/p2p/state`),
+  ackMessages: (count) => axios.post(`${BASE}/p2p/ack-messages`, { count }),
 };
